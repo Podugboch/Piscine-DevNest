@@ -16,13 +16,13 @@ func main() {
 	}
 
 	// Init DB + app layer
-	//app := app.InitApp()
+	app := app.InitApp()
 
 	// Gin router
 	r := gin.Default()
 
 	// Register routes
-	//app.Handler.RegisterRoutes(r)
+	app.Handler.RegisterRoutes(r)
 
 	// Start server
 	r.Run(":8080")
