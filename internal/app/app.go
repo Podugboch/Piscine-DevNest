@@ -16,7 +16,7 @@ import (
 func Run() error {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://postgres:mypassword@localhost:5432/piscine?sslmode=disable"
+		return fmt.Errorf("DATABASE_URL is not set")
 	}
 
 	jwtSecret := os.Getenv("JWT_SECRET")

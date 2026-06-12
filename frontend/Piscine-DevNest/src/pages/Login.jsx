@@ -1,7 +1,9 @@
-import React, { useState } from "react";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { login } from "./api.js";
 
-const Login = ({ onLogin }) => {
+const Login = () => {
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -18,9 +20,9 @@ const Login = ({ onLogin }) => {
         return;
       }
 
-      // Save token in localStorage
       localStorage.setItem("token", res.token);
-      onLogin(res.token); // notify parent
+      navigate("/dashboard");
+
     } catch (err) {
       setError("Login failed. Try again.");
     }
@@ -29,33 +31,32 @@ const Login = ({ onLogin }) => {
   return (
     <div style={{ maxWidth: "400px", margin: "50px auto" }}>
       <h2>Login</h2>
+
       <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: "10px" }}>
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={{ width: "100%", padding: "8px" }}
-          />
-        </div>
-        <div style={{ marginBottom: "10px" }}>
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={{ width: "100%", padding: "8px" }}
-          />
-        </div>
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <br /><br />
+
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+        <br /><br />
+
         {error && <p style={{ color: "red" }}>{error}</p>}
-        <button type="submit" style={{ padding: "10px 20px" }}>Login</button>
+
+        <button type="submit">Login</button>
       </form>
     </div>
   );
 };
 
 export default Login;
-
