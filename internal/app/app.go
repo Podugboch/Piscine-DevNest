@@ -30,9 +30,14 @@ func Run() error {
 		return fmt.Errorf("connect db: %w", err)
 	}
 
-	if err := db.AutoMigrate(&model.User{}, &model.Resource{}, &model.Connection{}); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
+	if err := db.AutoMigrate(
+	&model.User{},
+	&model.Resource{},
+	&model.Connection{},
+	&model.Post{},  
+	); err != nil {
+	return fmt.Errorf("migrate: %w", err)
+}
 
 r := gin.Default()
 

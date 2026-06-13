@@ -33,22 +33,28 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api.POST("/users", h.CreateUser)
 	api.POST("/login", h.Login)
 
-	// PROTECTED ROUTES (JWT REQUIRED)
+	// PROTECTED ROUTES
 	protected := api.Group("/", utils.JWTMiddleware())
 	{
+		// USERS
 		protected.GET("/users", h.GetUsers)
 		protected.GET("/users/:id", h.GetUser)
 		protected.PUT("/users/:id", h.UpdateUser)
 		protected.DELETE("/users/:id", h.DeleteUser)
 
+		// RESOURCES
 		protected.GET("/resources", h.GetResources)
 		protected.GET("/resources/:id", h.GetResource)
 		protected.POST("/resources", h.CreateResource)
 		protected.PUT("/resources/:id", h.UpdateResource)
 		protected.DELETE("/resources/:id", h.DeleteResource)
+
+		// POSTS ✅ ADDED
+		protected.GET("/posts", h.GetPosts)
+		protected.POST("/posts", h.CreatePost)
 	}
 
-	// WebSocket (optional protection can be added later)
+	// WebSocket
 	r.GET("/ws", func(c *gin.Context) {
 		h.Hub.HandleConnections(c.Writer, c.Request)
 	})
@@ -57,6 +63,43 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 // ---------------------- BASIC ----------------------
 func (h *Handler) Ping(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "pong"})
+}
+
+// ---------------------- POSTS ----------------------
+func (h *Handler) CreatePost(c *gin.Context) {
+	var input struct {
+		Content string `json:"content"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := c.GetUint("user_id")
+
+	post := model.Post{
+		UserID:  userID,
+		Content: input.Content,
+	}
+
+	if err := h.DB.Create(&post).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create post"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, post)
+}
+
+func (h *Handler) GetPosts(c *gin.Context) {
+	var posts []model.Post
+
+	if err := h.DB.Order("created_at desc").Find(&posts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch posts"})
+		return
+	}
+
+	c.JSON(http.StatusOK, posts)
 }
 
 // ---------------------- INPUT STRUCTS ----------------------
@@ -122,11 +165,7 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
-		return
-	}
+	hash, _ := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 
 	user := model.User{
 		Email:    input.Email,
@@ -160,28 +199,28 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		return
 	}
 
+	if input.Email != "" && !validateEmail(input.Email) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid email"})
+		return
+	}
+
+	if input.Username != "" && !validateUsername(input.Username) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid username"})
+		return
+	}
+
+	if input.Password != "" && !validatePassword(input.Password) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "password too short"})
+		return
+	}
+
 	if input.Email != "" {
-		if !validateEmail(input.Email) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid email"})
-			return
-		}
 		user.Email = input.Email
 	}
-
 	if input.Username != "" {
-		if !validateUsername(input.Username) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid username"})
-			return
-		}
 		user.Username = input.Username
 	}
-
 	if input.Password != "" {
-		if !validatePassword(input.Password) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "password too short"})
-			return
-		}
-
 		hash, _ := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 		user.Password = string(hash)
 	}
@@ -199,15 +238,11 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 }
 
 func (h *Handler) DeleteUser(c *gin.Context) {
-	if err := h.DB.Delete(&model.User{}, c.Param("id")).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
-		return
-	}
-
+	h.DB.Delete(&model.User{}, c.Param("id"))
 	c.Status(http.StatusNoContent)
 }
 
-// ---------------------- LOGIN (FIXED JWT) ----------------------
+// ---------------------- LOGIN ----------------------
 func (h *Handler) Login(c *gin.Context) {
 	var input LoginInput
 
@@ -217,19 +252,16 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	var user model.User
-if err := h.DB.Where("email = ?", input.Email).First(&user).Error; err != nil {
-        c.JSON(http.StatusUnauthorized, gin.H{
-                "error": "user not found",
-        })
-        return
-}
 
-if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
-        c.JSON(http.StatusUnauthorized, gin.H{
-                "error": "password mismatch",
-        })
-        return
-}
+	if err := h.DB.Where("email = ?", input.Email).First(&user).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "password mismatch"})
+		return
+	}
 
 	token, err := utils.GenerateToken(user.ID)
 	if err != nil {
@@ -237,12 +269,10 @@ if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Pass
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"token": token,
-	})
+	c.JSON(http.StatusOK, gin.H{"token": token})
 }
 
-// ---------------------- RESOURCE HANDLERS ----------------------
+// ---------------------- RESOURCE (EMPTY FOR NOW) ----------------------
 func (h *Handler) GetResources(c *gin.Context)   {}
 func (h *Handler) GetResource(c *gin.Context)    {}
 func (h *Handler) CreateResource(c *gin.Context) {}
