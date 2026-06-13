@@ -4,7 +4,8 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
+    "github.com/gin-contrib/cors"
+    "github.com/joho/godotenv"
 
 	//"piscine-devnest/internal/app"
 )

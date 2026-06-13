@@ -5,15 +5,30 @@ export default function App() {
   const [password, setPassword] = useState("");
 
   const login = async () => {
+  try {
     const res = await fetch("http://localhost:8080/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
 
+    if (!res.ok) {
+      alert("Invalid email or password");
+      return;
+    }
+
     const data = await res.json();
+
+    localStorage.setItem("token", data.token);
+
+    alert("Login successful!");
+
     console.log(data);
-  };
+  } catch (err) {
+    console.error(err);
+    alert("Could not connect to server");
+  }
+};
 
   return (
     <div style={{ padding: 40 }}>
