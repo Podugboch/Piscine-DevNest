@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -94,14 +95,37 @@ func (h *Handler) CreatePost(c *gin.Context) {
 func (h *Handler) GetPosts(c *gin.Context) {
 	var posts []model.Post
 
-	if err := h.DB.Order("created_at desc").Find(&posts).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch posts"})
+	limit := 10
+	page := 1
+
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	if p := c.Query("page"); p != "" {
+		fmt.Sscanf(p, "%d", &page)
+	}
+
+	offset := (page - 1) * limit
+
+	if err := h.DB.
+		Preload("User", func(db *gorm.DB) *gorm.DB {
+    return db.Select("id", "username", "name", "email")
+}).
+		Order("created_at desc").
+		Limit(limit).
+		Offset(offset).
+		Find(&posts).Error; err != nil {
+
+		c.JSON(500, gin.H{"error": "failed to fetch posts"})
 		return
 	}
 
-	c.JSON(http.StatusOK, posts)
+	for _, p := range posts {
+	fmt.Printf("PostID=%d UserID=%d User=%+v\n", p.ID, p.UserID, p.User)
 }
 
+c.JSON(200, posts)
+}
 // ---------------------- INPUT STRUCTS ----------------------
 type RegisterInput struct {
 	Email    string `json:"email" binding:"required"`

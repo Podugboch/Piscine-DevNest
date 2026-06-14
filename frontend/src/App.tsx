@@ -24,8 +24,8 @@ export default function App() {
   // Default to a fallback local dev user if backend profile isn't ready
   const [user, setUser] = useState<User | null>({
     id: 1,
-    username: "dev_builder",
-    email: "dev@nest.com"
+    username: "Jaytricks",
+  email: "jay@example.com"
   });
   
   const [page, setPage] = useState<"feed" | "create" | "profile">("feed");
@@ -65,11 +65,16 @@ export default function App() {
   // -----------------------------
   const fetchPosts = async () => {
     try {
-      const res = await fetch("http://localhost:8080/api/posts");
-      if (res.ok) {
-        const data = await res.json();
-        setPosts(data || []);
-      }
+      const res = await fetch("http://localhost:8080/api/posts", {
+  headers: {
+    Authorization: `Bearer ${token}`,
+  },
+});
+
+if (res.ok) {
+  const data = await res.json();
+  setPosts(data || []);
+}
     } catch (err) {
       console.error("Could not fetch live feed, using mock data placeholders instead.", err);
       // Mock data placeholder fallback if backend feed isn't running yet
