@@ -1,15 +1,15 @@
 import { useState, useEffect } from "react";
+import { timeAgo } from "./utils/timeAgo";
 
 type User = {
   id: number;
   username: string;
   email: string;
 };
-
 type Post = {
   id: number;
   content: string;
-  createdAt?: string;
+  created_at?: string;
   user?: User; // Handles backend relations cleanly
 };
 
@@ -31,6 +31,10 @@ export default function App() {
   const [page, setPage] = useState<"feed" | "create" | "profile">("feed");
   const [posts, setPosts] = useState<Post[]>([]);
   const [newPost, setNewPost] = useState("");
+
+  const [pageNumber, setPageNumber] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
   // -----------------------------
   // FETCH USER PROFILE
@@ -60,36 +64,70 @@ export default function App() {
     })();
   }, [token]);
 
+useEffect(() => {
+  if (!token) return;
+
+  fetchPosts(1);
+}, [token]);
+
   // -----------------------------
   // FETCH POSTS FEED (Live Backend Connection)
   // -----------------------------
-  const fetchPosts = async () => {
-    try {
-      const res = await fetch("http://localhost:8080/api/posts", {
-  headers: {
-    Authorization: `Bearer ${token}`,
-  },
-});
+const fetchPosts = async (pageNum: number = 1) => {
+  try {
+    const res = await fetch(
+      `http://localhost:8080/api/posts?page=${pageNum}&limit=10`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
 
-if (res.ok) {
-  const data = await res.json();
-  setPosts(data || []);
-}
-    } catch (err) {
-      console.error("Could not fetch live feed, using mock data placeholders instead.", err);
-      // Mock data placeholder fallback if backend feed isn't running yet
-      setPosts([
-        { id: 1, content: "Finally fixed my Go JWT middleware bug 🚀", user: { id: 99, username: "Jay", email: "" } },
-        { id: 2, content: "Why is Vercel ignoring my latest deployment?", user: { id: 98, username: "Ayo", email: "" } }
-      ]);
-    }
-  };
+    if (res.ok) {
+      const data = await res.json();
 
-  useEffect(() => {
-    if (token) {
-      fetchPosts();
+      if (pageNum === 1) {
+        setPosts(data || []);
+      } else {
+        setPosts((prev) => [...prev, ...(data || [])]);
+      }
+
+      if ((data || []).length < 10) {
+        setHasMore(false);
+      }
     }
-  }, [token, page]); // Refetches when switching pages/views
+  } catch (err) {
+    console.error(
+      "Could not fetch live feed, using mock data placeholders instead.",
+      err
+    );
+
+    setPosts([
+      {
+        id: 1,
+        content: "Finally fixed my Go JWT middleware bug 🚀",
+        user: { id: 99, username: "Jay", email: "" },
+      },
+      {
+        id: 2,
+        content: "Why is Vercel ignoring my latest deployment?",
+        user: { id: 98, username: "Ayo", email: "" },
+      },
+    ]);
+  }
+};
+
+const loadMorePosts = async () => {
+  setLoadingMore(true);
+
+  const nextPage = pageNumber + 1;
+
+  await fetchPosts(nextPage);
+
+  setPageNumber(nextPage);
+  setLoadingMore(false);
+};
 
   // -----------------------------
   // LOGIN
@@ -256,7 +294,9 @@ if (res.ok) {
                       <div>
                         <b>{displayName}</b>
                         <div style={styles.timestamp}>
-                          {post.createdAt ? new Date(post.createdAt).toLocaleDateString() : "Just now"}
+                          {post.created_at
+  ? timeAgo(post.created_at)
+  : "Just now"}
                         </div>
                       </div>
                     </div>
@@ -265,7 +305,23 @@ if (res.ok) {
                   </div>
                 );
               })}
-              {posts.length === 0 && <p style={{ opacity: 0.5 }}>No posts found on the feed.</p>}
+             {posts.length === 0 && (
+  <p style={{ opacity: 0.5 }}>
+    No posts found on the feed.
+  </p>
+)}
+
+{hasMore && posts.length > 0 && (
+  <div style={{ marginTop: 20 }}>
+    <button
+      style={styles.primaryBtn}
+      onClick={loadMorePosts}
+      disabled={loadingMore}
+    >
+      {loadingMore ? "Loading..." : "Load More Posts"}
+    </button>
+  </div>
+)}
             </div>
           </>
         )}
