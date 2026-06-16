@@ -1,0 +1,6 @@
+# Environment variables (Secrets)
+.env
+.env.local
+.env*.local
+.env]
+.env].save
