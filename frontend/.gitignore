@@ -1,3 +1,10 @@
+# Environment variables (Secrets)
+.env
+.env.local
+.env*.local
+.env]
+.env].save
+
 # Logs
 logs
 *.log
@@ -22,3 +29,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+#Secrets
+.env
+.env.local
+.env*.local
