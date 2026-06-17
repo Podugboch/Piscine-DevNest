@@ -2,15 +2,20 @@ package handlers
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
 	"piscine-devnest/internal/model"
+	"piscine-devnest/internal/storage"
 	"piscine-devnest/internal/utils"
 	"piscine-devnest/internal/ws"
 )
@@ -56,6 +61,9 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		protected.POST("/posts", h.CreatePost)
 		protected.PUT("/posts/:id", h.UpdatePost)
 		protected.DELETE("/posts/:id", h.DeletePost)
+
+		// MEDIA UPLOAD
+		protected.POST("/upload", h.UploadMedia)
 	}
 
 	// WebSocket
@@ -72,19 +80,19 @@ func (h *Handler) Ping(c *gin.Context) {
 // ---------------------- POSTS ----------------------
 func (h *Handler) CreatePost(c *gin.Context) {
 	var input struct {
-		Content string `json:"content"`
+		Content  string `json:"content"`
+		MediaURL string `json:"media_url"` // 👈 Capture incoming media URL
 	}
-
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	userID := c.GetUint("user_id")
-
 	post := model.Post{
-		UserID:  userID,
-		Content: input.Content,
+		UserID:   userID,
+		Content:  input.Content,
+		MediaURL: input.MediaURL, // 👈 Assign it to the database model
 	}
 
 	if err := h.DB.Create(&post).Error; err != nil {
@@ -97,6 +105,37 @@ func (h *Handler) CreatePost(c *gin.Context) {
 	}).First(&post, post.ID)
 
 	c.JSON(http.StatusCreated, post)
+}
+
+func (h *Handler) UploadMedia(c *gin.Context) {
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no file uploaded"})
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read file"})
+		return
+	}
+
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	ext := filepath.Ext(header.Filename)
+	filename := fmt.Sprintf("%d_%s%s", time.Now().UnixNano(), uuid.New().String()[:8], ext)
+
+	publicURL, err := storage.UploadToSupabase("media", filename, data, contentType)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"url": publicURL})
 }
 
 func (h *Handler) GetPosts(c *gin.Context) {
@@ -194,8 +233,6 @@ func (h *Handler) DeletePost(c *gin.Context) {
 		"message": "post deleted",
 	})
 }
-
-
 
 // ---------------------- INPUT STRUCTS ----------------------
 type RegisterInput struct {

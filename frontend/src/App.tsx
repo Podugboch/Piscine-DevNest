@@ -13,6 +13,7 @@ type User = {
 type Post = {
   id: number;
   content: string;
+  media_url?: string;
   created_at?: string;
   user?: User;
 };
@@ -34,6 +35,10 @@ export default function App() {
   const [page, setPage] = useState<"feed" | "create" | "profile">("feed");
   const [posts, setPosts] = useState<Post[]>([]);
   const [newPost, setNewPost] = useState("");
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [mediaPreview, setMediaPreview] = useState<string | null>(null);
 
   const [pageNumber, setPageNumber] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -176,45 +181,67 @@ export default function App() {
   // -----------------------------
   // CREATE POST
   // -----------------------------
-  const createPost = async () => {
-    if (!newPost.trim()) return;
+const createPost = async () => {
+  if (!newPost.trim() && !selectedFile) return;
+  setUploadingMedia(true);
 
-    try {
-      const res = await fetch("http://localhost:8080/api/posts", {
+  try {
+    let uploadedUrl = "";
+
+    // If there's a file, upload it to Supabase storage first
+    if (selectedFile) {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      const uploadRes = await fetch("http://localhost:8080/api/upload", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ content: newPost }),
+        body: formData,
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        const newPostObj: Post = {
-          ...data,
-          user:
-            data.user && data.user.username
-              ? data.user
-              : user || { id: 0, username: "Anonymous", email: "" },
-        };
-        setPosts((prev) => [newPostObj, ...prev]);
-        setNewPost("");
-        setPage("feed");
-      } else {
-        alert("Failed to save post to backend.");
+      if (!uploadRes.ok) {
+        alert("Failed to upload media file.");
+        setUploadingMedia(false);
+        return;
       }
-    } catch {
-      const fallbackPost: Post = {
-        id: Date.now(),
-        content: newPost,
-        user: user || { id: 1, username: "Anonymous", email: "" },
-      };
-      setPosts([fallbackPost, ...posts]);
-      setNewPost("");
-      setPage("feed");
+
+      const uploadData = await uploadRes.json();
+      uploadedUrl = uploadData.url;
     }
-  };
+
+    // Create the actual post with content and media URL
+    const res = await fetch("http://localhost:8080/api/posts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ content: newPost, media_url: uploadedUrl }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const newPostObj: Post = {
+        ...data,
+        user: data.user && data.user.username ? data.user : user || { id: 0, username: "Anonymous", email: "" },
+      };
+      setPosts((prev) => [newPostObj, ...prev]);
+      setNewPost("");
+      setSelectedFile(null);
+      setMediaPreview(null);
+      setPage("feed");
+    } else {
+      alert("Failed to save post to backend.");
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Connection error during publishing.");
+  } finally {
+    setUploadingMedia(false);
+  }
+};
 
   // -----------------------------
   // LOGGED OUT VIEW
@@ -284,6 +311,17 @@ export default function App() {
 
                     <p style={styles.postContent}>{post.content}</p>
 
+                   {/* 👇 Change the background color right here inside the media component wrapper */}
+                   {post.media_url && (
+                     <div style={{ marginTop: 10, borderRadius: 8, overflow: "hidden", background: "#000" }}>
+                       {post.media_url.match(/\.(mp4|webm|ogg|mov|MOV|mp4\?|mov\?)/i) || post.media_url.includes("video") ? (
+                          <video src={post.media_url} controls style={{ width: "100%", maxHeight: 500 }} />
+                        ) : (
+                          <img src={post.media_url} alt="Post asset" style={{ width: "100%", maxHeight: 400, objectFit: "contain" }} />
+                        )}
+                      </div>
+                     )}
+
                     <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
                       <button onClick={() => { setEditingPost(post); setEditText(post.content); }}>Edit</button>
                       <button onClick={() => deletePost(post.id)}>Delete</button>
@@ -348,18 +386,52 @@ export default function App() {
         )}
 
         {/* CREATE */}
-        {page === "create" && (
-          <div style={styles.createBox}>
-            <h1>Create Post</h1>
-            <textarea
-              style={styles.textarea}
-              placeholder="Share a win, bug, idea, or question..."
-              value={newPost}
-              onChange={(e) => setNewPost(e.target.value)}
-            />
-            <button style={styles.primaryBtn} onClick={createPost}>Publish</button>
-          </div>
+{page === "create" && (
+  <div style={styles.createBox}>
+    <h1>Create Post</h1>
+    <textarea
+      style={styles.textarea}
+      placeholder="Share a win, bug, idea, or question..."
+      value={newPost}
+      onChange={(e) => setNewPost(e.target.value)}
+    />
+    
+    <div style={{ marginBottom: 15 }}>
+      <input
+        type="file"
+        accept="image/*,video/*"
+        onChange={(e) => {
+          const file = e.target.files?.[0] || null;
+          setSelectedFile(file);
+          if (file) {
+            setMediaPreview(URL.createObjectURL(file));
+          } else {
+            setMediaPreview(null);
+          }
+        }}
+      />
+    </div>
+
+    {/* Local File Preview Rendering Section */}
+    {mediaPreview && selectedFile && (
+      <div style={{ marginBottom: 15, position: 'relative', maxWidth: '100%' }}>
+        {selectedFile.type.startsWith("video/") ? (
+          <video src={mediaPreview} controls style={{ width: "100%", maxHeight: 300, borderRadius: 8 }} />
+        ) : (
+          <img src={mediaPreview} alt="Preview" style={{ width: "100%", maxHeight: 300, objectFit: "cover", borderRadius: 8 }} />
         )}
+      </div>
+    )}
+
+    <button 
+      style={styles.primaryBtn} 
+      onClick={createPost}
+      disabled={uploadingMedia}
+    >
+      {uploadingMedia ? "Uploading & Publishing..." : "Publish"}
+    </button>
+  </div>
+)}
 
         {/* PROFILE */}
         {page === "profile" && (
