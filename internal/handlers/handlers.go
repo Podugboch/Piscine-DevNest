@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"strconv" // 👈 Added for parameter parsing
 	"strings"
 	"time"
 
@@ -56,11 +57,15 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		protected.PUT("/resources/:id", h.UpdateResource)
 		protected.DELETE("/resources/:id", h.DeleteResource)
 
-		// POSTS ✅ ADDED// POSTS
+		// POSTS
 		protected.GET("/posts", h.GetPosts)
 		protected.POST("/posts", h.CreatePost)
 		protected.PUT("/posts/:id", h.UpdatePost)
 		protected.DELETE("/posts/:id", h.DeletePost)
+		
+		// LIKES & COMMENTS ✅ REGISTERED SMOOTHLY
+		protected.POST("/posts/:id/like", h.LikePost)
+		protected.POST("/posts/:id/comments", h.AddComment)
 
 		// MEDIA UPLOAD
 		protected.POST("/upload", h.UploadMedia)
@@ -81,7 +86,7 @@ func (h *Handler) Ping(c *gin.Context) {
 func (h *Handler) CreatePost(c *gin.Context) {
 	var input struct {
 		Content  string `json:"content"`
-		MediaURL string `json:"media_url"` // 👈 Capture incoming media URL
+		MediaURL string `json:"media_url"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -92,7 +97,7 @@ func (h *Handler) CreatePost(c *gin.Context) {
 	post := model.Post{
 		UserID:   userID,
 		Content:  input.Content,
-		MediaURL: input.MediaURL, // 👈 Assign it to the database model
+		MediaURL: input.MediaURL,
 	}
 
 	if err := h.DB.Create(&post).Error; err != nil {
@@ -101,7 +106,7 @@ func (h *Handler) CreatePost(c *gin.Context) {
 	}
 
 	h.DB.Preload("User", func(db *gorm.DB) *gorm.DB {
-		return db.Select("id", "username", "name", "email")
+		return db.Select("id", "username", "name", "email", "avatar_url")
 	}).First(&post, post.ID)
 
 	c.JSON(http.StatusCreated, post)
@@ -155,25 +160,22 @@ func (h *Handler) GetPosts(c *gin.Context) {
 
 	if err := h.DB.
 		Preload("User", func(db *gorm.DB) *gorm.DB {
-    return db.Select("id", "username", "name", "email")
-}).
+			return db.Select("id", "username", "name", "email", "avatar_url")
+		}).
+		Preload("Comments.User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id", "username", "name", "email", "avatar_url")
+		}).
 		Order("created_at desc").
 		Limit(limit).
 		Offset(offset).
 		Find(&posts).Error; err != nil {
 
-		c.JSON(500, gin.H{"error": "failed to fetch posts"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch posts"})
 		return
 	}
 
-	for _, p := range posts {
-	fmt.Printf("PostID=%d UserID=%d User=%+v\n", p.ID, p.UserID, p.User)
+	c.JSON(http.StatusOK, posts)
 }
-
-c.JSON(200, posts)
-
-}
-
 
 func (h *Handler) UpdatePost(c *gin.Context) {
 	var post model.Post
@@ -206,7 +208,7 @@ func (h *Handler) UpdatePost(c *gin.Context) {
 	}
 
 	h.DB.Preload("User", func(db *gorm.DB) *gorm.DB {
-		return db.Select("id", "username", "name", "email")
+		return db.Select("id", "username", "name", "email", "avatar_url")
 	}).First(&post, post.ID)
 
 	c.JSON(http.StatusOK, post)
@@ -232,6 +234,56 @@ func (h *Handler) DeletePost(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "post deleted",
 	})
+}
+
+// ---------------------- INTERACTIONS ----------------------
+
+func (h *Handler) LikePost(c *gin.Context) {
+	id := c.Param("id")
+	var post model.Post
+	if err := h.DB.First(&post, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Post not found"})
+		return
+	}
+	
+	h.DB.Model(&post).Update("likes", post.Likes+1)
+	c.JSON(http.StatusOK, post)
+}
+
+func (h *Handler) AddComment(c *gin.Context) {
+	id := c.Param("id")
+	userID := c.GetUint("user_id")
+
+	var req struct {
+		Content string `json:"content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Content required"})
+		return
+	}
+
+	postIDNum, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid post id"})
+		return
+	}
+
+	comment := model.Comment{
+		PostID:  uint(postIDNum),
+		UserID:  userID,
+		Content: req.Content,
+	}
+
+	if err := h.DB.Create(&comment).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save comment"})
+		return
+	}
+
+	h.DB.Preload("User", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id", "username", "name", "email", "avatar_url")
+	}).First(&comment, comment.ID)
+	
+	c.JSON(http.StatusOK, comment)
 }
 
 // ---------------------- INPUT STRUCTS ----------------------
@@ -294,17 +346,17 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		return
 	}
 
-	if !validateEmail(input.Email) {
+	if !h.validateEmail(input.Email) { // 👈 Prefixed with h.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid email"})
 		return
 	}
 
-	if !validatePassword(input.Password) {
+	if !h.validatePassword(input.Password) { // 👈 Prefixed with h.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "password too short"})
 		return
 	}
 
-	if !validateUsername(input.Username) {
+	if !h.validateUsername(input.Username) { // 👈 Prefixed with h.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "username too short"})
 		return
 	}
@@ -343,17 +395,17 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	if input.Email != "" && !validateEmail(input.Email) {
+	if input.Email != "" && !h.validateEmail(input.Email) { // 👈 Prefixed with h.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid email"})
 		return
 	}
 
-	if input.Username != "" && !validateUsername(input.Username) {
+	if input.Username != "" && !h.validateUsername(input.Username) { // 👈 Prefixed with h.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid username"})
 		return
 	}
 
-	if input.Password != "" && !validatePassword(input.Password) {
+	if input.Password != "" && !h.validatePassword(input.Password) { // 👈 Prefixed with h.
 		c.JSON(http.StatusBadRequest, gin.H{"error": "password too short"})
 		return
 	}
@@ -424,16 +476,15 @@ func (h *Handler) UpdateResource(c *gin.Context) {}
 func (h *Handler) DeleteResource(c *gin.Context) {}
 
 // ---------------------- VALIDATION ----------------------
-func validateEmail(email string) bool {
+func (h *Handler) validateEmail(email string) bool { // 👈 Attached to *Handler struct
 	re := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
 	return re.MatchString(email)
 }
 
-func validatePassword(password string) bool {
+func (h *Handler) validatePassword(password string) bool { // 👈 Attached to *Handler struct
 	return len(password) >= 6
 }
 
-func validateUsername(username string) bool {
+func (h *Handler) validateUsername(username string) bool { // 👈 Attached to *Handler struct
 	return len(username) >= 3
 }
-

@@ -25,29 +25,34 @@ func Run() error {
 		jwtSecret = "dev-secret"
 	}
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	// 1. FIXED: Set PrepareStmt to false to stop the "SQLSTATE 42P05 already exists" crash
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		PrepareStmt: false, 
+	})
 	if err != nil {
 		return fmt.Errorf("connect db: %w", err)
 	}
 
+	// 2. FIXED: Added &model.Comment{} to migrate and create the missing table (fixes SQLSTATE 42P01)
 	if err := db.AutoMigrate(
-	&model.User{},
-	&model.Resource{},
-	&model.Connection{},
-	&model.Post{},  
+		&model.User{},
+		&model.Resource{},
+		&model.Connection{},
+		&model.Post{},  
+		&model.Comment{}, // 👈 Added this line
 	); err != nil {
-	return fmt.Errorf("migrate: %w", err)
-}
+		return fmt.Errorf("migrate: %w", err)
+	}
 
-r := gin.Default()
+	r := gin.Default()
 
-r.Use(cors.New(cors.Config{
-	AllowOrigins:     []string{"http://localhost:5173"},
-	AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-	AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-	ExposeHeaders:    []string{"Content-Length"},
-	AllowCredentials: true,
-}))
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:5173"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+	}))
 
 	// WebSocket Hub
 	hub := ws.NewHub()

@@ -8,6 +8,15 @@ type User = {
   bio?: string;
   skills?: string;
   location?: string;
+  avatar_url?: string;
+};
+
+type Comment = {
+  id: number;
+  post_id: number;
+  content: string;
+  created_at: string;
+  user?: User;
 };
 
 type Post = {
@@ -16,11 +25,17 @@ type Post = {
   media_url?: string;
   created_at?: string;
   user?: User;
+  likes: number;
+  comments?: Comment[];
 };
 
 export default function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  
+  // New States for Multi-Auth Handling
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [username, setUsername] = useState("");
 
   const [token, setToken] = useState<string | null>(
     localStorage.getItem("token")
@@ -43,6 +58,10 @@ export default function App() {
   const [pageNumber, setPageNumber] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+
+  const [activeDropdown, setActiveDropdown] = useState<number | null>(null);
+  const [commentInputs, setCommentInputs] = useState<{ [postId: number]: string }>({});
+  const [expandedComments, setExpandedComments] = useState<{ [postId: number]: boolean }>({});
 
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [editText, setEditText] = useState("");
@@ -120,8 +139,8 @@ export default function App() {
     } catch (err) {
       console.error("Could not fetch live feed.", err);
       setPosts([
-        { id: 1, content: "Finally fixed my Go JWT middleware bug 🚀", user: { id: 99, username: "Jay", email: "" } },
-        { id: 2, content: "Why is Vercel ignoring my latest deployment?", user: { id: 98, username: "Ayo", email: "" } },
+        { id: 1, content: "Finally fixed my Go JWT middleware bug 🚀", likes: 0, user: { id: 99, username: "Jay", email: "" } },
+        { id: 2, content: "Why is Vercel ignoring my latest deployment?", likes: 0, user: { id: 98, username: "Ayo", email: "" } },
       ]);
     }
   };
@@ -133,6 +152,12 @@ export default function App() {
     setPageNumber(nextPage);
     setLoadingMore(false);
   };
+
+  useEffect(() => {
+    const closeAllDropdowns = () => setActiveDropdown(null);
+    window.addEventListener("click", closeAllDropdowns);
+    return () => window.removeEventListener("click", closeAllDropdowns);
+  }, []);
 
   // -----------------------------
   // DELETE POST
@@ -181,80 +206,138 @@ export default function App() {
   // -----------------------------
   // CREATE POST
   // -----------------------------
-const createPost = async () => {
-  if (!newPost.trim() && !selectedFile) return;
-  setUploadingMedia(true);
+  const createPost = async () => {
+    if (!newPost.trim() && !selectedFile) return;
+    setUploadingMedia(true);
 
-  try {
-    let uploadedUrl = "";
+    try {
+      let uploadedUrl = "";
 
-    // If there's a file, upload it to Supabase storage first
-    if (selectedFile) {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
+      if (selectedFile) {
+        const formData = new FormData();
+        formData.append("file", selectedFile);
 
-      const uploadRes = await fetch("http://localhost:8080/api/upload", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      });
+        const uploadRes = await fetch("http://localhost:8080/api/upload", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        });
 
-      if (!uploadRes.ok) {
-        alert("Failed to upload media file.");
-        setUploadingMedia(false);
-        return;
+        if (!uploadRes.ok) {
+          alert("Failed to upload media file.");
+          setUploadingMedia(false);
+          return;
+        }
+
+        const uploadData = await uploadRes.json();
+        uploadedUrl = uploadData.url;
       }
 
-      const uploadData = await uploadRes.json();
-      uploadedUrl = uploadData.url;
-    }
+      const res = await fetch("http://localhost:8080/api/posts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: newPost, media_url: uploadedUrl }),
+      });
 
-    // Create the actual post with content and media URL
-    const res = await fetch("http://localhost:8080/api/posts", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ content: newPost, media_url: uploadedUrl }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const newPostObj: Post = {
-        ...data,
-        user: data.user && data.user.username ? data.user : user || { id: 0, username: "Anonymous", email: "" },
-      };
-      setPosts((prev) => [newPostObj, ...prev]);
-      setNewPost("");
-      setSelectedFile(null);
-      setMediaPreview(null);
-      setPage("feed");
-    } else {
-      alert("Failed to save post to backend.");
+      if (res.ok) {
+        const data = await res.json();
+        const newPostObj: Post = {
+          ...data,
+          likes: 0,
+          comments: [],
+          user: data.user && data.user.username ? data.user : user || { id: 0, username: "Anonymous", email: "" },
+        };
+        setPosts((prev) => [newPostObj, ...prev]);
+        setNewPost("");
+        setSelectedFile(null);
+        setMediaPreview(null);
+        setPage("feed");
+      } else {
+        alert("Failed to save post to backend.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Connection error during publishing.");
+    } finally {
+      setUploadingMedia(false);
     }
-  } catch (err) {
-    console.error(err);
-    alert("Connection error during publishing.");
-  } finally {
-    setUploadingMedia(false);
-  }
-};
+  };
 
   // -----------------------------
-  // LOGGED OUT VIEW
+  // LOGGED OUT VIEW (AUTH GATE)
   // -----------------------------
   if (!token) {
+    const handleRegister = async () => {
+      if (!email || !username || !password) {
+        alert("Please fill out all fields.");
+        return;
+      }
+      try {
+        const res = await fetch("http://localhost:8080/api/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, username, password }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || "Registration failed");
+          return;
+        }
+
+        alert("Account created successfully! You can now log in.");
+        setAuthMode("login"); 
+      } catch {
+        alert("Cannot connect to server at http://localhost:8080");
+      }
+    };
+
     return (
       <div style={styles.authPage}>
         <div style={styles.authCard}>
-          <h1 style={{ marginBottom: 10 }}>DevNest</h1>
-          <p style={{ opacity: 0.7, marginBottom: 20 }}>A live community for Piscine builders</p>
+          <h1 style={{ marginBottom: 5 }}>DevNest</h1>
+          <p style={{ opacity: 0.7, marginBottom: 20 }}>
+            {authMode === "login" ? "A live community for Piscine builders" : "Create a new developer profile"}
+          </p>
+
+          {authMode === "register" && (
+            <input 
+              style={styles.input} 
+              placeholder="Username" 
+              value={username} 
+              onChange={(e) => setUsername(e.target.value)} 
+            />
+          )}
+
           <input style={styles.input} placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <input style={styles.input} placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <button style={styles.primaryBtn} onClick={login}>Login</button>
+          
+          {authMode === "login" ? (
+            <>
+              <button style={styles.primaryBtn} onClick={login}>Login</button>
+              <p style={{ fontSize: 12, marginTop: 15, textAlign: "center", opacity: 0.6 }}>
+                New to DevNest?{" "}
+                <span style={{ color: "#2563eb", cursor: "pointer", textDecoration: "underline" }} onClick={() => setAuthMode("register")}>
+                  Sign up
+                </span>
+              </p>
+            </>
+          ) : (
+            <>
+              <button style={styles.primaryBtn} onClick={handleRegister}>Create Account</button>
+              <p style={{ fontSize: 12, marginTop: 15, textAlign: "center", opacity: 0.6 }}>
+                Already registered?{" "}
+                <span style={{ color: "#2563eb", cursor: "pointer", textDecoration: "underline" }} onClick={() => setAuthMode("login")}>
+                  Log in
+                </span>
+              </p>
+            </>
+          )}
         </div>
       </div>
     );
@@ -297,77 +380,187 @@ const createPost = async () => {
             <div style={styles.feed}>
               {posts.map((post) => {
                 const displayName = post.user?.username || "Anonymous";
+                const postComments = post.comments || [];
+                const isDropdownOpen = activeDropdown === post.id;
+                const isCommentsExpanded = expandedComments[post.id] || false;
+
                 return (
                   <div key={post.id} style={styles.postCard}>
+                    
+                    {/* POST HEADER WITH DROPDOWN MENU */}
                     <div style={styles.postHeader}>
-                      <div style={styles.avatar}>{displayName.charAt(0).toUpperCase()}</div>
+                      <div style={styles.avatar}>
+                        {post.user?.avatar_url ? (
+                          <img src={post.user.avatar_url} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }} />
+                        ) : (
+                          displayName.charAt(0).toUpperCase()
+                        )}
+                      </div>
                       <div>
                         <b>{displayName}</b>
                         <div style={styles.timestamp}>
                           {post.created_at ? timeAgo(post.created_at) : "Just now"}
                         </div>
                       </div>
+
+                      <div style={{ marginLeft: "auto", position: "relative" }}>
+                        <button 
+                          style={styles.iconBtn} 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveDropdown(isDropdownOpen ? null : post.id);
+                          }}
+                        >
+                          ⋮
+                        </button>
+
+                        {isDropdownOpen && (
+                          <div style={styles.dropdownMenu}>
+                            <button 
+                              style={styles.dropdownItem} 
+                              onClick={() => { setEditingPost(post); setEditText(post.content); setActiveDropdown(null); }}
+                            >
+                              ✏️ Edit Post
+                            </button>
+                            <button 
+                              style={{ ...styles.dropdownItem, color: "#ef4444" }} 
+                              onClick={() => { deletePost(post.id); setActiveDropdown(null); }}
+                            >
+                              🗑️ Delete Post
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
+                    {/* CONTENT */}
                     <p style={styles.postContent}>{post.content}</p>
 
-                   {/* 👇 Change the background color right here inside the media component wrapper */}
-                   {post.media_url && (
-                     <div style={{ marginTop: 10, borderRadius: 8, overflow: "hidden", background: "#000" }}>
-                       {post.media_url.match(/\.(mp4|webm|ogg|mov|MOV|mp4\?|mov\?)/i) || post.media_url.includes("video") ? (
+                    {/* MEDIA */}
+                    {post.media_url && (
+                      <div style={{ marginTop: 10, borderRadius: 8, overflow: "hidden", background: "#000" }}>
+                        {post.media_url.match(/\.(mp4|webm|ogg|mov|MOV|mp4\?|mov\?)/i) || post.media_url.includes("video") ? (
                           <video src={post.media_url} controls style={{ width: "100%", maxHeight: 500 }} />
                         ) : (
                           <img src={post.media_url} alt="Post asset" style={{ width: "100%", maxHeight: 400, objectFit: "contain" }} />
                         )}
                       </div>
-                     )}
+                    )}
 
-                    <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                      <button onClick={() => { setEditingPost(post); setEditText(post.content); }}>Edit</button>
-                      <button onClick={() => deletePost(post.id)}>Delete</button>
+                    {/* INTERACTION ACTION BAR */}
+                    <div style={styles.actionBar}>
+                      <button 
+                        style={styles.actionBtn} 
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`http://localhost:8080/api/posts/${post.id}/like`, {
+                              method: "POST",
+                              headers: { Authorization: `Bearer ${token}` }
+                            });
+                            if (res.ok) {
+                              setPosts(prev => prev.map(p => p.id === post.id ? { ...p, likes: p.likes + 1 } : p));
+                            }
+                          } catch (err) { console.error("Like error", err); }
+                        }}
+                      >
+                        ❤️ {post.likes || 0} Likes
+                      </button>
+
+                      <button 
+                        style={styles.actionBtn}
+                        onClick={() => setExpandedComments(prev => ({ ...prev, [post.id]: !isCommentsExpanded }))}
+                      >
+                        💬 {postComments.length} Comments
+                      </button>
+
+                      <button 
+                        style={styles.actionBtn}
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${window.location.origin}/posts/${post.id}`);
+                          alert("Post link copied to clipboard! Share it with fellow builders.");
+                        }}
+                      >
+                        🔗 Share
+                      </button>
                     </div>
 
+                    {/* EDIT INLINE DROP PANEL */}
                     {editingPost?.id === post.id && (
                       <div style={{ background: "#0b0f19", padding: 15, borderRadius: 10, marginTop: 10, border: "1px solid #374151" }}>
                         <h3>Edit Post</h3>
-                        <textarea
-                          style={styles.textarea}
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                        />
+                        <textarea style={styles.textarea} value={editText} onChange={(e) => setEditText(e.target.value)} />
                         <div style={{ display: "flex", gap: 10 }}>
                           <button
                             style={styles.primaryBtn}
                             onClick={async () => {
                               try {
-                                const res = await fetch(
-                                  `http://localhost:8080/api/posts/${editingPost?.id}`,
-                                  {
-                                    method: "PUT",
-                                    headers: {
-                                      "Content-Type": "application/json",
-                                      Authorization: `Bearer ${token}`,
-                                    },
-                                    body: JSON.stringify({ content: editText }),
-                                  }
-                                );
-                                if (!res.ok) { alert("Failed to update post"); return; }
+                                const res = await fetch(`http://localhost:8080/api/posts/${editingPost?.id}`, {
+                                  method: "PUT",
+                                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                                  body: JSON.stringify({ content: editText }),
+                                });
+                                if (!res.ok) return;
                                 const updatedPost = await res.json();
-                                setPosts((prev) => prev.map((p) => p.id === updatedPost.id ? updatedPost : p));
+                                setPosts((prev) => prev.map((p) => p.id === updatedPost.id ? { ...p, content: updatedPost.content } : p));
                                 setEditingPost(null);
-                                setEditText("");
-                              } catch (err) {
-                                console.error(err);
-                                alert("Error updating post");
-                              }
+                              } catch (err) { console.error(err); }
                             }}
                           >
                             Save
                           </button>
-                          <button style={styles.navBtn} onClick={() => { setEditingPost(null); setEditText(""); }}>Cancel</button>
+                          <button style={styles.navBtn} onClick={() => setEditingPost(null)}>Cancel</button>
                         </div>
                       </div>
                     )}
+
+                    {/* COMMENTS ACCORDION AREA */}
+                    {isCommentsExpanded && (
+                      <div style={styles.commentSection}>
+                        <div style={{ display: "flex", gap: 10, marginBottom: 15 }}>
+                          <input 
+                            style={{ ...styles.input, marginBottom: 0, flex: 1 }} 
+                            placeholder="Write a constructive comment..." 
+                            value={commentInputs[post.id] || ""}
+                            onChange={(e) => setCommentInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
+                          />
+                          <button 
+                            style={styles.primaryBtn}
+                            onClick={async () => {
+                              const text = commentInputs[post.id];
+                              if (!text || !text.trim()) return;
+                              try {
+                                const res = await fetch(`http://localhost:8080/api/posts/${post.id}/comments`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                                  body: JSON.stringify({ content: text })
+                                });
+                                if (res.ok) {
+                                  const newComment = await res.json();
+                                  setPosts(prev => prev.map(p => p.id === post.id ? { ...p, comments: [...(p.comments || []), newComment] } : p));
+                                  setCommentInputs(prev => ({ ...prev, [post.id]: "" }));
+                                }
+                              } catch (err) { console.error("Comment submission error", err); }
+                            }}
+                          >
+                            Reply
+                          </button>
+                        </div>
+
+                        {/* List rendered comments */}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {postComments.map((comment) => (
+                            <div key={comment.id} style={styles.commentRow}>
+                              <b style={{ color: "#2563eb", fontSize: 13 }}>@{comment.user?.username || "builder"}:</b>
+                              <span style={{ fontSize: 13, marginLeft: 6, color: "#e5e7eb" }}>{comment.content}</span>
+                            </div>
+                          ))}
+                          {postComments.length === 0 && (
+                            <p style={{ opacity: 0.4, fontSize: 12, textAlign: "center" }}>Be the first to spark context on this post!</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                   </div>
                 );
               })}
@@ -386,52 +579,51 @@ const createPost = async () => {
         )}
 
         {/* CREATE */}
-{page === "create" && (
-  <div style={styles.createBox}>
-    <h1>Create Post</h1>
-    <textarea
-      style={styles.textarea}
-      placeholder="Share a win, bug, idea, or question..."
-      value={newPost}
-      onChange={(e) => setNewPost(e.target.value)}
-    />
-    
-    <div style={{ marginBottom: 15 }}>
-      <input
-        type="file"
-        accept="image/*,video/*"
-        onChange={(e) => {
-          const file = e.target.files?.[0] || null;
-          setSelectedFile(file);
-          if (file) {
-            setMediaPreview(URL.createObjectURL(file));
-          } else {
-            setMediaPreview(null);
-          }
-        }}
-      />
-    </div>
+        {page === "create" && (
+          <div style={styles.createBox}>
+            <h1>Create Post</h1>
+            <textarea
+              style={styles.textarea}
+              placeholder="Share a win, bug, idea, or question..."
+              value={newPost}
+              onChange={(e) => setNewPost(e.target.value)}
+            />
+            
+            <div style={{ marginBottom: 15 }}>
+              <input
+                type="file"
+                accept="image/*,video/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null;
+                  setSelectedFile(file);
+                  if (file) {
+                    setMediaPreview(URL.createObjectURL(file));
+                  } else {
+                    setMediaPreview(null);
+                  }
+                }}
+              />
+            </div>
 
-    {/* Local File Preview Rendering Section */}
-    {mediaPreview && selectedFile && (
-      <div style={{ marginBottom: 15, position: 'relative', maxWidth: '100%' }}>
-        {selectedFile.type.startsWith("video/") ? (
-          <video src={mediaPreview} controls style={{ width: "100%", maxHeight: 300, borderRadius: 8 }} />
-        ) : (
-          <img src={mediaPreview} alt="Preview" style={{ width: "100%", maxHeight: 300, objectFit: "cover", borderRadius: 8 }} />
+            {mediaPreview && selectedFile && (
+              <div style={{ marginBottom: 15, position: 'relative', maxWidth: '100%' }}>
+                {selectedFile.type.startsWith("video/") ? (
+                  <video src={mediaPreview} controls style={{ width: "100%", maxHeight: 300, borderRadius: 8 }} />
+                ) : (
+                  <img src={mediaPreview} alt="Preview" style={{ width: "100%", maxHeight: 300, objectFit: "cover", borderRadius: 8 }} />
+                )}
+              </div>
+            )}
+
+            <button 
+              style={styles.primaryBtn} 
+              onClick={createPost}
+              disabled={uploadingMedia}
+            >
+              {uploadingMedia ? "Uploading & Publishing..." : "Publish"}
+            </button>
+          </div>
         )}
-      </div>
-    )}
-
-    <button 
-      style={styles.primaryBtn} 
-      onClick={createPost}
-      disabled={uploadingMedia}
-    >
-      {uploadingMedia ? "Uploading & Publishing..." : "Publish"}
-    </button>
-  </div>
-)}
 
         {/* PROFILE */}
         {page === "profile" && (
@@ -441,6 +633,27 @@ const createPost = async () => {
               <>
                 {!editingProfile ? (
                   <div style={styles.profileCard}>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+                      <div style={{
+                        width: 80,
+                        height: 80,
+                        borderRadius: "50%",
+                        background: "#2563eb",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontWeight: "bold",
+                        fontSize: 28,
+                        overflow: "hidden"
+                      }}>
+                        {user.avatar_url ? (
+                          <img src={user.avatar_url} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          (user.username || "U").charAt(0).toUpperCase()
+                        )}
+                      </div>
+                    </div>
+
                     <p><b>Email:</b> {user.email}</p>
                     <p><b>Username:</b> {user.username || "N/A"}</p>
                     <p><b>Bio:</b> {user.bio || "—"}</p>
@@ -455,6 +668,8 @@ const createPost = async () => {
                           skills: user.skills || "",
                           location: user.location || "",
                         });
+                        setMediaPreview(user.avatar_url || null);
+                        setSelectedFile(null);
                         setEditingProfile(true);
                       }}
                     >
@@ -463,6 +678,37 @@ const createPost = async () => {
                   </div>
                 ) : (
                   <div style={styles.profileCard}>
+                    <label style={styles.label}>Profile Picture</label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 15 }}>
+                      <div style={{
+                        width: 60,
+                        height: 60,
+                        borderRadius: "50%",
+                        background: "#374151",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        overflow: "hidden"
+                      }}>
+                        {mediaPreview ? (
+                          <img src={mediaPreview} alt="Preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <span style={{ fontSize: 12, opacity: 0.5 }}>No Image</span>
+                        )}
+                      </div>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null;
+                          setSelectedFile(file);
+                          if (file) {
+                            setMediaPreview(URL.createObjectURL(file));
+                          }
+                        }} 
+                      />
+                    </div>
+
                     <label style={styles.label}>Username</label>
                     <input style={styles.input} value={profileForm.username} onChange={(e) => setProfileForm((f) => ({ ...f, username: e.target.value }))} />
 
@@ -478,8 +724,37 @@ const createPost = async () => {
                     <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
                       <button
                         style={styles.primaryBtn}
+                        disabled={uploadingMedia}
                         onClick={async () => {
+                          setUploadingMedia(true);
                           try {
+                            let currentAvatarUrl = user.avatar_url || "";
+
+                            if (selectedFile) {
+                              const formData = new FormData();
+                              formData.append("file", selectedFile);
+
+                              const uploadRes = await fetch("http://localhost:8080/api/upload", {
+                                method: "POST",
+                                headers: { Authorization: `Bearer ${token}` },
+                                body: formData
+                              });
+
+                              if (uploadRes.ok) {
+                                const uploadData = await uploadRes.json();
+                                currentAvatarUrl = uploadData.url;
+                              } else {
+                                alert("Failed to upload avatar image.");
+                                setUploadingMedia(false);
+                                return;
+                              }
+                            }
+
+                            const profilePayload = {
+                              ...profileForm,
+                              avatar_url: currentAvatarUrl
+                            };
+
                             const res = await fetch(
                               `http://localhost:8080/api/users/${user.id}`,
                               {
@@ -488,22 +763,27 @@ const createPost = async () => {
                                   "Content-Type": "application/json",
                                   Authorization: `Bearer ${token}`,
                                 },
-                                body: JSON.stringify(profileForm),
+                                body: JSON.stringify(profilePayload),
                               }
                             );
+                            
                             if (!res.ok) { alert("Failed to update profile"); return; }
                             const updated = await res.json();
                             setUser(updated);
                             setEditingProfile(false);
+                            setSelectedFile(null);
+                            setMediaPreview(null);
                           } catch (err) {
                             console.error(err);
                             alert("Error updating profile");
+                          } finally {
+                            setUploadingMedia(false);
                           }
                         }}
                       >
-                        Save
+                        {uploadingMedia ? "Saving..." : "Save"}
                       </button>
-                      <button style={styles.navBtn} onClick={() => setEditingProfile(false)}>Cancel</button>
+                      <button style={styles.navBtn} onClick={() => { setEditingProfile(false); setSelectedFile(null); setMediaPreview(null); }}>Cancel</button>
                     </div>
                   </div>
                 )}
@@ -531,8 +811,8 @@ const styles: any = {
   main: { flex: 1, padding: 30, overflowY: "auto" },
   feed: { display: "flex", flexDirection: "column", gap: 15, maxWidth: 600 },
   postCard: { background: "#111827", padding: 15, borderRadius: 10, border: "1px solid #1f2937" },
-  postHeader: { display: "flex", gap: 10, alignItems: "center", marginBottom: 10 },
-  avatar: { width: 35, height: 35, borderRadius: "50%", background: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold" },
+  postHeader: { display: "flex", gap: 10, alignItems: "center", marginBottom: 10, position: "relative" },
+  avatar: { width: 35, height: 35, borderRadius: "50%", background: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", overflow: "hidden" },
   postContent: { fontSize: 14, lineHeight: 1.5 },
   timestamp: { fontSize: 12, opacity: 0.5 },
   createBox: { maxWidth: 600 },
@@ -543,4 +823,12 @@ const styles: any = {
   authCard: { width: 320, padding: 20, borderRadius: 10, background: "#111827", border: "1px solid #1f2937" },
   profileCard: { background: "#111827", padding: 15, borderRadius: 10, maxWidth: 400 },
   label: { display: "block", marginTop: 10, marginBottom: 4, fontSize: 13, opacity: 0.7 },
+  
+  actionBar: { display: "flex", justifyContent: "space-between", marginTop: 15, paddingTop: 10, borderTop: "1px solid #1f2937" },
+  actionBtn: { background: "transparent", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 5 },
+  iconBtn: { background: "transparent", border: "none", color: "#9ca3af", fontSize: 18, cursor: "pointer", padding: "0 5px" },
+  dropdownMenu: { position: "absolute", right: 0, top: 25, background: "#1f2937", border: "1px solid #374151", borderRadius: 6, boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)", zIndex: 10, minWidth: 120, overflow: "hidden" },
+  dropdownItem: { display: "block", width: "100%", padding: "8px 12px", background: "transparent", border: "none", color: "#fff", textAlign: "left", cursor: "pointer", fontSize: 12, transition: "background 0.2s" },
+  commentSection: { marginTop: 15, padding: "15px 0 0 0", borderTop: "1px dashed #1f2937" },
+  commentRow: { background: "#1f2937", padding: "8px 12px", borderRadius: 6, display: "flex", alignItems: "baseline" },
 };
