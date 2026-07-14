@@ -6,7 +6,7 @@ import (
 
 type Comment struct {
     ID        uint      `gorm:"primaryKey" json:"id"`
-    PostID    uint      `gorm:"index" json:"post_id"`
+    PostID    uint      `gorm:"index;constraint:OnDelete:CASCADE" json:"post_id"`
     UserID    uint      `gorm:"index" json:"user_id"`
     User      *User     `gorm:"foreignKey:UserID" json:"user"` 
     Content   string    `gorm:"not null" json:"content"`

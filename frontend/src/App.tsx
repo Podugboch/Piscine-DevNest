@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { timeAgo } from "./utils/timeAgo";
+import "./App.css";
 
 type User = {
   id: number;
@@ -32,8 +33,7 @@ type Post = {
 export default function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  
-  // New States for Multi-Auth Handling
+
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
 
@@ -291,48 +291,48 @@ export default function App() {
         }
 
         alert("Account created successfully! You can now log in.");
-        setAuthMode("login"); 
+        setAuthMode("login");
       } catch {
         alert("Cannot connect to server at http://localhost:8080");
       }
     };
 
     return (
-      <div style={styles.authPage}>
-        <div style={styles.authCard}>
-          <h1 style={{ marginBottom: 5 }}>DevNest</h1>
-          <p style={{ opacity: 0.7, marginBottom: 20 }}>
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1>DevNest</h1>
+          <p className="auth-subtitle">
             {authMode === "login" ? "A live community for Piscine builders" : "Create a new developer profile"}
           </p>
 
           {authMode === "register" && (
-            <input 
-              style={styles.input} 
-              placeholder="Username" 
-              value={username} 
-              onChange={(e) => setUsername(e.target.value)} 
+            <input
+              className="input"
+              placeholder="Username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
             />
           )}
 
-          <input style={styles.input} placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <input style={styles.input} placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          
+          <input className="input" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input className="input" placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+
           {authMode === "login" ? (
             <>
-              <button style={styles.primaryBtn} onClick={login}>Login</button>
-              <p style={{ fontSize: 12, marginTop: 15, textAlign: "center", opacity: 0.6 }}>
+              <button className="primary-btn" style={{ width: "100%" }} onClick={login}>Login</button>
+              <p className="auth-switch">
                 New to DevNest?{" "}
-                <span style={{ color: "#2563eb", cursor: "pointer", textDecoration: "underline" }} onClick={() => setAuthMode("register")}>
+                <span className="link" onClick={() => setAuthMode("register")}>
                   Sign up
                 </span>
               </p>
             </>
           ) : (
             <>
-              <button style={styles.primaryBtn} onClick={handleRegister}>Create Account</button>
-              <p style={{ fontSize: 12, marginTop: 15, textAlign: "center", opacity: 0.6 }}>
+              <button className="primary-btn" style={{ width: "100%" }} onClick={handleRegister}>Create Account</button>
+              <p className="auth-switch">
                 Already registered?{" "}
-                <span style={{ color: "#2563eb", cursor: "pointer", textDecoration: "underline" }} onClick={() => setAuthMode("login")}>
+                <span className="link" onClick={() => setAuthMode("login")}>
                   Log in
                 </span>
               </p>
@@ -347,16 +347,16 @@ export default function App() {
   // LOGGED IN LAYOUT
   // -----------------------------
   return (
-    <div style={styles.app}>
+    <div className="app">
       {/* SIDEBAR */}
-      <div style={styles.sidebar}>
-        <h2 style={{ marginBottom: 20 }}>DevNest</h2>
-        <button style={page === "feed" ? styles.activeNav : styles.navBtn} onClick={() => setPage("feed")}>Feed</button>
-        <button style={page === "create" ? styles.activeNav : styles.navBtn} onClick={() => setPage("create")}>Create Post</button>
-        <button style={page === "profile" ? styles.activeNav : styles.navBtn} onClick={() => setPage("profile")}>Profile</button>
+      <div className="sidebar">
+        <h2>DevNest</h2>
+        <button className={page === "feed" ? "active-nav" : "nav-btn"} onClick={() => setPage("feed")}>Feed</button>
+        <button className={page === "create" ? "active-nav" : "nav-btn"} onClick={() => setPage("create")}>Create Post</button>
+        <button className={page === "profile" ? "active-nav" : "nav-btn"} onClick={() => setPage("profile")}>Profile</button>
         <div style={{ marginTop: "auto" }}>
           <button
-            style={styles.logoutBtn}
+            className="logout-btn"
             onClick={() => {
               localStorage.removeItem("token");
               setToken(null);
@@ -369,15 +369,15 @@ export default function App() {
       </div>
 
       {/* MAIN CONTENT */}
-      <div style={styles.main}>
+      <div className="main-content">
 
         {/* FEED */}
         {page === "feed" && (
           <>
-            <h1 style={{ marginBottom: 5 }}>Live Feed</h1>
-            <p style={{ opacity: 0.6, marginBottom: 20 }}>What's happening in DevNest</p>
+            <h1>Live Feed</h1>
+            <p className="page-subtitle">What's happening in DevNest</p>
 
-            <div style={styles.feed}>
+            <div className="feed">
               {posts.map((post) => {
                 const displayName = post.user?.username || "Anonymous";
                 const postComments = post.comments || [];
@@ -385,27 +385,27 @@ export default function App() {
                 const isCommentsExpanded = expandedComments[post.id] || false;
 
                 return (
-                  <div key={post.id} style={styles.postCard}>
-                    
+                  <div key={post.id} className="post-card">
+
                     {/* POST HEADER WITH DROPDOWN MENU */}
-                    <div style={styles.postHeader}>
-                      <div style={styles.avatar}>
+                    <div className="post-header">
+                      <div className="avatar">
                         {post.user?.avatar_url ? (
-                          <img src={post.user.avatar_url} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }} />
+                          <img src={post.user.avatar_url} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         ) : (
                           displayName.charAt(0).toUpperCase()
                         )}
                       </div>
                       <div>
                         <b>{displayName}</b>
-                        <div style={styles.timestamp}>
+                        <div className="timestamp">
                           {post.created_at ? timeAgo(post.created_at) : "Just now"}
                         </div>
                       </div>
 
                       <div style={{ marginLeft: "auto", position: "relative" }}>
-                        <button 
-                          style={styles.iconBtn} 
+                        <button
+                          className="icon-btn"
                           onClick={(e) => {
                             e.stopPropagation();
                             setActiveDropdown(isDropdownOpen ? null : post.id);
@@ -415,15 +415,15 @@ export default function App() {
                         </button>
 
                         {isDropdownOpen && (
-                          <div style={styles.dropdownMenu}>
-                            <button 
-                              style={styles.dropdownItem} 
+                          <div className="dropdown-menu">
+                            <button
+                              className="dropdown-item"
                               onClick={() => { setEditingPost(post); setEditText(post.content); setActiveDropdown(null); }}
                             >
                               ✏️ Edit Post
                             </button>
-                            <button 
-                              style={{ ...styles.dropdownItem, color: "#ef4444" }} 
+                            <button
+                              className="dropdown-item danger"
                               onClick={() => { deletePost(post.id); setActiveDropdown(null); }}
                             >
                               🗑️ Delete Post
@@ -434,23 +434,23 @@ export default function App() {
                     </div>
 
                     {/* CONTENT */}
-                    <p style={styles.postContent}>{post.content}</p>
+                    <p className="post-content">{post.content}</p>
 
                     {/* MEDIA */}
                     {post.media_url && (
-                      <div style={{ marginTop: 10, borderRadius: 8, overflow: "hidden", background: "#000" }}>
+                      <div className="post-media">
                         {post.media_url.match(/\.(mp4|webm|ogg|mov|MOV|mp4\?|mov\?)/i) || post.media_url.includes("video") ? (
-                          <video src={post.media_url} controls style={{ width: "100%", maxHeight: 500 }} />
+                          <video src={post.media_url} controls />
                         ) : (
-                          <img src={post.media_url} alt="Post asset" style={{ width: "100%", maxHeight: 400, objectFit: "contain" }} />
+                          <img src={post.media_url} alt="Post asset" />
                         )}
                       </div>
                     )}
 
                     {/* INTERACTION ACTION BAR */}
-                    <div style={styles.actionBar}>
-                      <button 
-                        style={styles.actionBtn} 
+                    <div className="action-bar">
+                      <button
+                        className="action-btn"
                         onClick={async () => {
                           try {
                             const res = await fetch(`http://localhost:8080/api/posts/${post.id}/like`, {
@@ -466,15 +466,15 @@ export default function App() {
                         ❤️ {post.likes || 0} Likes
                       </button>
 
-                      <button 
-                        style={styles.actionBtn}
+                      <button
+                        className="action-btn"
                         onClick={() => setExpandedComments(prev => ({ ...prev, [post.id]: !isCommentsExpanded }))}
                       >
                         💬 {postComments.length} Comments
                       </button>
 
-                      <button 
-                        style={styles.actionBtn}
+                      <button
+                        className="action-btn"
                         onClick={() => {
                           navigator.clipboard.writeText(`${window.location.origin}/posts/${post.id}`);
                           alert("Post link copied to clipboard! Share it with fellow builders.");
@@ -486,12 +486,12 @@ export default function App() {
 
                     {/* EDIT INLINE DROP PANEL */}
                     {editingPost?.id === post.id && (
-                      <div style={{ background: "#0b0f19", padding: 15, borderRadius: 10, marginTop: 10, border: "1px solid #374151" }}>
+                      <div className="edit-panel">
                         <h3>Edit Post</h3>
-                        <textarea style={styles.textarea} value={editText} onChange={(e) => setEditText(e.target.value)} />
-                        <div style={{ display: "flex", gap: 10 }}>
+                        <textarea className="textarea" value={editText} onChange={(e) => setEditText(e.target.value)} />
+                        <div className="edit-panel-actions">
                           <button
-                            style={styles.primaryBtn}
+                            className="primary-btn"
                             onClick={async () => {
                               try {
                                 const res = await fetch(`http://localhost:8080/api/posts/${editingPost?.id}`, {
@@ -508,23 +508,23 @@ export default function App() {
                           >
                             Save
                           </button>
-                          <button style={styles.navBtn} onClick={() => setEditingPost(null)}>Cancel</button>
+                          <button className="secondary-btn" onClick={() => setEditingPost(null)}>Cancel</button>
                         </div>
                       </div>
                     )}
 
                     {/* COMMENTS ACCORDION AREA */}
                     {isCommentsExpanded && (
-                      <div style={styles.commentSection}>
-                        <div style={{ display: "flex", gap: 10, marginBottom: 15 }}>
-                          <input 
-                            style={{ ...styles.input, marginBottom: 0, flex: 1 }} 
-                            placeholder="Write a constructive comment..." 
+                      <div className="comment-section">
+                        <div className="comment-form">
+                          <input
+                            className="input"
+                            placeholder="Write a constructive comment..."
                             value={commentInputs[post.id] || ""}
                             onChange={(e) => setCommentInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
                           />
-                          <button 
-                            style={styles.primaryBtn}
+                          <button
+                            className="primary-btn"
                             onClick={async () => {
                               const text = commentInputs[post.id];
                               if (!text || !text.trim()) return;
@@ -546,16 +546,15 @@ export default function App() {
                           </button>
                         </div>
 
-                        {/* List rendered comments */}
-                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        <div className="comment-list">
                           {postComments.map((comment) => (
-                            <div key={comment.id} style={styles.commentRow}>
-                              <b style={{ color: "#2563eb", fontSize: 13 }}>@{comment.user?.username || "builder"}:</b>
-                              <span style={{ fontSize: 13, marginLeft: 6, color: "#e5e7eb" }}>{comment.content}</span>
+                            <div key={comment.id} className="comment-row">
+                              <b className="comment-author">@{comment.user?.username || "builder"}:</b>
+                              <span className="comment-text">{comment.content}</span>
                             </div>
                           ))}
                           {postComments.length === 0 && (
-                            <p style={{ opacity: 0.4, fontSize: 12, textAlign: "center" }}>Be the first to spark context on this post!</p>
+                            <p className="comment-empty">Be the first to spark context on this post!</p>
                           )}
                         </div>
                       </div>
@@ -565,11 +564,11 @@ export default function App() {
                 );
               })}
 
-              {posts.length === 0 && <p style={{ opacity: 0.5 }}>No posts found on the feed.</p>}
+              {posts.length === 0 && <p className="feed-empty">No posts found on the feed.</p>}
 
               {hasMore && posts.length > 0 && (
                 <div style={{ marginTop: 20 }}>
-                  <button style={styles.primaryBtn} onClick={loadMorePosts} disabled={loadingMore}>
+                  <button className="primary-btn" onClick={loadMorePosts} disabled={loadingMore}>
                     {loadingMore ? "Loading..." : "Load More Posts"}
                   </button>
                 </div>
@@ -580,33 +579,37 @@ export default function App() {
 
         {/* CREATE */}
         {page === "create" && (
-          <div style={styles.createBox}>
+          <div className="create-box">
             <h1>Create Post</h1>
             <textarea
-              style={styles.textarea}
+              className="textarea"
               placeholder="Share a win, bug, idea, or question..."
               value={newPost}
               onChange={(e) => setNewPost(e.target.value)}
             />
-            
-            <div style={{ marginBottom: 15 }}>
-              <input
-                type="file"
-                accept="image/*,video/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0] || null;
-                  setSelectedFile(file);
-                  if (file) {
-                    setMediaPreview(URL.createObjectURL(file));
-                  } else {
-                    setMediaPreview(null);
-                  }
-                }}
-              />
+
+            <div className="file-input-wrapper">
+              <label className="file-input-label">
+                📎 Attach media
+                <input
+                  type="file"
+                  accept="image/*,video/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    setSelectedFile(file);
+                    if (file) {
+                      setMediaPreview(URL.createObjectURL(file));
+                    } else {
+                      setMediaPreview(null);
+                    }
+                  }}
+                />
+              </label>
+              <span className="file-name">{selectedFile ? selectedFile.name : "No file chosen"}</span>
             </div>
 
             {mediaPreview && selectedFile && (
-              <div style={{ marginBottom: 15, position: 'relative', maxWidth: '100%' }}>
+              <div style={{ marginBottom: 15, position: "relative", maxWidth: "100%" }}>
                 {selectedFile.type.startsWith("video/") ? (
                   <video src={mediaPreview} controls style={{ width: "100%", maxHeight: 300, borderRadius: 8 }} />
                 ) : (
@@ -615,8 +618,8 @@ export default function App() {
               </div>
             )}
 
-            <button 
-              style={styles.primaryBtn} 
+            <button
+              className="primary-btn"
               onClick={createPost}
               disabled={uploadingMedia}
             >
@@ -627,25 +630,14 @@ export default function App() {
 
         {/* PROFILE */}
         {page === "profile" && (
-          <div style={{ maxWidth: 500 }}>
+          <div className="profile-page">
             <h1>Profile</h1>
             {user ? (
               <>
                 {!editingProfile ? (
-                  <div style={styles.profileCard}>
-                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
-                      <div style={{
-                        width: 80,
-                        height: 80,
-                        borderRadius: "50%",
-                        background: "#2563eb",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontWeight: "bold",
-                        fontSize: 28,
-                        overflow: "hidden"
-                      }}>
+                  <div className="profile-card">
+                    <div className="profile-avatar-row">
+                      <div className="avatar avatar-lg">
                         {user.avatar_url ? (
                           <img src={user.avatar_url} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         ) : (
@@ -654,13 +646,14 @@ export default function App() {
                       </div>
                     </div>
 
-                    <p><b>Email:</b> {user.email}</p>
-                    <p><b>Username:</b> {user.username || "N/A"}</p>
-                    <p><b>Bio:</b> {user.bio || "—"}</p>
-                    <p><b>Skills:</b> {user.skills || "—"}</p>
-                    <p><b>Location:</b> {user.location || "—"}</p>
+                    <p className="profile-field"><b>Email:</b> {user.email}</p>
+                    <p className="profile-field"><b>Username:</b> {user.username || "N/A"}</p>
+                    <p className="profile-field"><b>Bio:</b> {user.bio || "—"}</p>
+                    <p className="profile-field"><b>Skills:</b> {user.skills || "—"}</p>
+                    <p className="profile-field"><b>Location:</b> {user.location || "—"}</p>
                     <button
-                      style={{ ...styles.primaryBtn, marginTop: 15 }}
+                      className="primary-btn"
+                      style={{ marginTop: 15 }}
                       onClick={() => {
                         setProfileForm({
                           username: user.username || "",
@@ -677,53 +670,47 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <div style={styles.profileCard}>
-                    <label style={styles.label}>Profile Picture</label>
-                    <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 15 }}>
-                      <div style={{
-                        width: 60,
-                        height: 60,
-                        borderRadius: "50%",
-                        background: "#374151",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        overflow: "hidden"
-                      }}>
+                  <div className="profile-card">
+                    <label className="label">Profile Picture</label>
+                    <div className="profile-avatar-edit-row">
+                      <div className="avatar-placeholder">
                         {mediaPreview ? (
                           <img src={mediaPreview} alt="Preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         ) : (
-                          <span style={{ fontSize: 12, opacity: 0.5 }}>No Image</span>
+                          <span>No Image</span>
                         )}
                       </div>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null;
-                          setSelectedFile(file);
-                          if (file) {
-                            setMediaPreview(URL.createObjectURL(file));
-                          }
-                        }} 
-                      />
+                      <label className="file-input-label">
+                        📎 Change photo
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] || null;
+                            setSelectedFile(file);
+                            if (file) {
+                              setMediaPreview(URL.createObjectURL(file));
+                            }
+                          }}
+                        />
+                      </label>
                     </div>
 
-                    <label style={styles.label}>Username</label>
-                    <input style={styles.input} value={profileForm.username} onChange={(e) => setProfileForm((f) => ({ ...f, username: e.target.value }))} />
+                    <label className="label">Username</label>
+                    <input className="input" value={profileForm.username} onChange={(e) => setProfileForm((f) => ({ ...f, username: e.target.value }))} />
 
-                    <label style={styles.label}>Bio</label>
-                    <textarea style={styles.textarea} value={profileForm.bio} onChange={(e) => setProfileForm((f) => ({ ...f, bio: e.target.value }))} />
+                    <label className="label">Bio</label>
+                    <textarea className="textarea" value={profileForm.bio} onChange={(e) => setProfileForm((f) => ({ ...f, bio: e.target.value }))} />
 
-                    <label style={styles.label}>Skills</label>
-                    <input style={styles.input} value={profileForm.skills} onChange={(e) => setProfileForm((f) => ({ ...f, skills: e.target.value }))} />
+                    <label className="label">Skills</label>
+                    <input className="input" value={profileForm.skills} onChange={(e) => setProfileForm((f) => ({ ...f, skills: e.target.value }))} />
 
-                    <label style={styles.label}>Location</label>
-                    <input style={styles.input} value={profileForm.location} onChange={(e) => setProfileForm((f) => ({ ...f, location: e.target.value }))} />
+                    <label className="label">Location</label>
+                    <input className="input" value={profileForm.location} onChange={(e) => setProfileForm((f) => ({ ...f, location: e.target.value }))} />
 
-                    <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                    <div className="form-actions">
                       <button
-                        style={styles.primaryBtn}
+                        className="primary-btn"
                         disabled={uploadingMedia}
                         onClick={async () => {
                           setUploadingMedia(true);
@@ -766,7 +753,7 @@ export default function App() {
                                 body: JSON.stringify(profilePayload),
                               }
                             );
-                            
+
                             if (!res.ok) { alert("Failed to update profile"); return; }
                             const updated = await res.json();
                             setUser(updated);
@@ -783,7 +770,7 @@ export default function App() {
                       >
                         {uploadingMedia ? "Saving..." : "Save"}
                       </button>
-                      <button style={styles.navBtn} onClick={() => { setEditingProfile(false); setSelectedFile(null); setMediaPreview(null); }}>Cancel</button>
+                      <button className="secondary-btn" onClick={() => { setEditingProfile(false); setSelectedFile(null); setMediaPreview(null); }}>Cancel</button>
                     </div>
                   </div>
                 )}
@@ -798,37 +785,3 @@ export default function App() {
     </div>
   );
 }
-
-// -----------------------------
-// STYLES
-// -----------------------------
-const styles: any = {
-  app: { display: "flex", height: "100vh", fontFamily: "Arial, sans-serif", background: "#0b0f19", color: "#fff" },
-  sidebar: { width: 240, background: "#111827", padding: 20, display: "flex", flexDirection: "column", borderRight: "1px solid #1f2937" },
-  navBtn: { background: "transparent", border: "none", color: "#aaa", padding: "10px 0", textAlign: "left", cursor: "pointer" },
-  activeNav: { background: "#1f2937", border: "none", color: "#fff", padding: "10px", textAlign: "left", borderRadius: 6, cursor: "pointer" },
-  logoutBtn: { marginTop: 20, background: "#ef4444", border: "none", color: "#fff", padding: 10, width: "100%", borderRadius: 6, cursor: "pointer" },
-  main: { flex: 1, padding: 30, overflowY: "auto" },
-  feed: { display: "flex", flexDirection: "column", gap: 15, maxWidth: 600 },
-  postCard: { background: "#111827", padding: 15, borderRadius: 10, border: "1px solid #1f2937" },
-  postHeader: { display: "flex", gap: 10, alignItems: "center", marginBottom: 10, position: "relative" },
-  avatar: { width: 35, height: 35, borderRadius: "50%", background: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", overflow: "hidden" },
-  postContent: { fontSize: 14, lineHeight: 1.5 },
-  timestamp: { fontSize: 12, opacity: 0.5 },
-  createBox: { maxWidth: 600 },
-  textarea: { width: "100%", height: 120, marginTop: 10, marginBottom: 10, padding: 10, borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#fff" },
-  input: { display: "block", width: "100%", padding: 10, marginBottom: 10, borderRadius: 6, border: "1px solid #333", background: "#0f172a", color: "#fff", boxSizing: "border-box" },
-  primaryBtn: { background: "#2563eb", color: "#fff", border: "none", padding: "10px 15px", borderRadius: 6, cursor: "pointer" },
-  authPage: { display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", background: "#0b0f19" },
-  authCard: { width: 320, padding: 20, borderRadius: 10, background: "#111827", border: "1px solid #1f2937" },
-  profileCard: { background: "#111827", padding: 15, borderRadius: 10, maxWidth: 400 },
-  label: { display: "block", marginTop: 10, marginBottom: 4, fontSize: 13, opacity: 0.7 },
-  
-  actionBar: { display: "flex", justifyContent: "space-between", marginTop: 15, paddingTop: 10, borderTop: "1px solid #1f2937" },
-  actionBtn: { background: "transparent", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 5 },
-  iconBtn: { background: "transparent", border: "none", color: "#9ca3af", fontSize: 18, cursor: "pointer", padding: "0 5px" },
-  dropdownMenu: { position: "absolute", right: 0, top: 25, background: "#1f2937", border: "1px solid #374151", borderRadius: 6, boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)", zIndex: 10, minWidth: 120, overflow: "hidden" },
-  dropdownItem: { display: "block", width: "100%", padding: "8px 12px", background: "transparent", border: "none", color: "#fff", textAlign: "left", cursor: "pointer", fontSize: 12, transition: "background 0.2s" },
-  commentSection: { marginTop: 15, padding: "15px 0 0 0", borderTop: "1px dashed #1f2937" },
-  commentRow: { background: "#1f2937", padding: "8px 12px", borderRadius: 6, display: "flex", alignItems: "baseline" },
-};
