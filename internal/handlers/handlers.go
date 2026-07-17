@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,8 +48,18 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		protected.GET("/me", h.Me)
 		protected.GET("/users", h.GetUsers)
 		protected.GET("/users/:id", h.GetUser)
+		protected.GET("/users/by-username/:username", h.GetUserByUsername)
+		protected.GET("/users/search", h.SearchUsers)
 		protected.PUT("/users/:id", h.UpdateUser)
 		protected.DELETE("/users/:id", h.DeleteUser)
+
+		protected.GET("/users/:id/profile", h.GetUserProfile)
+		protected.GET("/users/:id/posts", h.GetUserPosts)
+
+		protected.POST("/users/:id/follow", h.FollowUser)
+		protected.DELETE("/users/:id/follow", h.UnfollowUser)
+		protected.GET("/users/:id/followers", h.GetFollowers)
+		protected.GET("/users/:id/following", h.GetFollowing)
 
 		// RESOURCES
 		protected.GET("/resources", h.GetResources)
@@ -60,12 +71,18 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		// POSTS
 		protected.GET("/posts", h.GetPosts)
 		protected.POST("/posts", h.CreatePost)
+		protected.POST("/posts/:id/repost", h.RepostPost)
 		protected.PUT("/posts/:id", h.UpdatePost)
 		protected.DELETE("/posts/:id", h.DeletePost)
-		
+
 		// LIKES & COMMENTS ✅ REGISTERED SMOOTHLY
 		protected.POST("/posts/:id/like", h.LikePost)
 		protected.POST("/posts/:id/comments", h.AddComment)
+
+		//NOTIFICATION
+		protected.GET("/notifications", h.GetNotifications)
+		protected.POST("/notifications/:id/read", h.MarkNotificationRead)
+		protected.POST("/notifications/read-all", h.MarkAllNotificationsRead)
 
 		// MEDIA UPLOAD
 		protected.POST("/upload", h.UploadMedia)
@@ -73,7 +90,19 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 
 	// WebSocket
 	r.GET("/ws", func(c *gin.Context) {
-		h.Hub.HandleConnections(c.Writer, c.Request)
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
+			return
+		}
+
+		claims, err := utils.ParseToken(tokenStr)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
+			return
+		}
+
+		h.Hub.HandleConnections(c.Writer, c.Request, claims.UserID)
 	})
 }
 
@@ -108,6 +137,8 @@ func (h *Handler) CreatePost(c *gin.Context) {
 	h.DB.Preload("User", func(db *gorm.DB) *gorm.DB {
 		return db.Select("id", "username", "name", "email", "avatar_url")
 	}).First(&post, post.ID)
+
+	h.processMentions(post.Content, userID, post.ID)
 
 	c.JSON(http.StatusCreated, post)
 }
@@ -157,14 +188,29 @@ func (h *Handler) GetPosts(c *gin.Context) {
 	}
 
 	offset := (page - 1) * limit
+	userID := c.GetUint("user_id")
 
-	if err := h.DB.
+	query := h.DB.
 		Preload("User", func(db *gorm.DB) *gorm.DB {
 			return db.Select("id", "username", "name", "email", "avatar_url")
 		}).
 		Preload("Comments.User", func(db *gorm.DB) *gorm.DB {
 			return db.Select("id", "username", "name", "email", "avatar_url")
 		}).
+		Preload("Parent").
+		Preload("Parent.User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id", "username", "name", "email", "avatar_url")
+		})
+
+
+	if c.Query("following") == "true" {
+		var followingIDs []uint
+		h.DB.Model(&model.Follow{}).Where("follower_id = ?", userID).Pluck("following_id", &followingIDs)
+		followingIDs = append(followingIDs, userID) // include your own posts too
+		query = query.Where("user_id IN ?", followingIDs)
+	}
+
+	if err := query.
 		Order("created_at desc").
 		Limit(limit).
 		Offset(offset).
@@ -172,6 +218,22 @@ func (h *Handler) GetPosts(c *gin.Context) {
 
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch posts"})
 		return
+	}
+
+	if len(posts) > 0 {
+		ids := make([]uint, len(posts))
+		for i, p := range posts {
+			ids[i] = p.ID
+		}
+		var likedIDs []uint
+		h.DB.Model(&model.Like{}).Where("user_id = ? AND post_id IN ?", userID, ids).Pluck("post_id", &likedIDs)
+		likedSet := make(map[uint]bool, len(likedIDs))
+		for _, id := range likedIDs {
+			likedSet[id] = true
+		}
+		for i := range posts {
+			posts[i].LikedByMe = likedSet[posts[i].ID]
+		}
 	}
 
 	c.JSON(http.StatusOK, posts)
@@ -236,18 +298,102 @@ func (h *Handler) DeletePost(c *gin.Context) {
 	})
 }
 
+func (h *Handler) RepostPost(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	targetPostIDNum, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid post id"})
+		return
+	}
+	targetPostID := uint(targetPostIDNum)
+
+	// 1. Verify the original post exists
+	var originalPost model.Post
+	if err := h.DB.First(&originalPost, targetPostID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "original post not found"})
+		return
+	}
+
+	// 2. Create the repost
+	// A repost has no media of its own and optional comment/text content (like a quote retweet), 
+	// or it can just be a pure repost with empty content.
+	var input struct {
+		Content string `json:"content"`
+	}
+	_ = c.ShouldBindJSON(&input) // optional: allows quote reposts!
+
+	repost := model.Post{
+		UserID:   userID,
+		Content:  input.Content,
+		ParentID: &targetPostID,
+	}
+
+	if err := h.DB.Create(&repost).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create repost"})
+		return
+	}
+
+	// 3. Load the relations (including the nested parent post and the parent post's author)
+	h.DB.Preload("User", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id", "username", "name", "email", "avatar_url")
+	}).Preload("Parent").Preload("Parent.User", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id", "username", "name", "email", "avatar_url")
+	}).First(&repost, repost.ID)
+
+	// 4. Notify the original poster that someone reposted their content!
+	h.createNotification(originalPost.UserID, userID, "repost", &repost.ID)
+
+	c.JSON(http.StatusCreated, repost)
+}
+
 // ---------------------- INTERACTIONS ----------------------
 
 func (h *Handler) LikePost(c *gin.Context) {
-	id := c.Param("id")
+	userID := c.GetUint("user_id")
+
+	postIDNum, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid post id"})
+		return
+	}
+	postID := uint(postIDNum)
+
 	var post model.Post
-	if err := h.DB.First(&post, id).Error; err != nil {
+	if err := h.DB.First(&post, postID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Post not found"})
 		return
 	}
-	
-	h.DB.Model(&post).Update("likes", post.Likes+1)
-	c.JSON(http.StatusOK, post)
+
+	var existing model.Like
+	err = h.DB.Where("user_id = ? AND post_id = ?", userID, postID).First(&existing).Error
+
+	liked := false
+	if err == nil {
+		// Already liked -> unlike
+		if err := h.DB.Delete(&existing).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unlike post"})
+			return
+		}
+		liked = false
+	} else {
+		// Not liked yet -> like
+		like := model.Like{UserID: userID, PostID: postID}
+		if err := h.DB.Create(&like).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to like post"})
+			return
+		}
+		liked = true
+		h.createNotification(post.UserID, userID, "like", &postID)
+	}
+
+	// Always recompute the count fresh from the likes table itself.
+	// This makes the count self-correcting -- it can never drift or go
+	// negative, even if two toggle requests race each other.
+	var count int64
+	h.DB.Model(&model.Like{}).Where("post_id = ?", postID).Count(&count)
+	h.DB.Model(&post).UpdateColumn("likes", count)
+
+	c.JSON(http.StatusOK, gin.H{"liked": liked, "likes": count})
 }
 
 func (h *Handler) AddComment(c *gin.Context) {
@@ -267,9 +413,16 @@ func (h *Handler) AddComment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid post id"})
 		return
 	}
+	postID := uint(postIDNum)
+
+	var post model.Post
+	if err := h.DB.First(&post, postID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "post not found"})
+		return
+	}
 
 	comment := model.Comment{
-		PostID:  uint(postIDNum),
+		PostID:  postID,
 		UserID:  userID,
 		Content: req.Content,
 	}
@@ -282,8 +435,180 @@ func (h *Handler) AddComment(c *gin.Context) {
 	h.DB.Preload("User", func(db *gorm.DB) *gorm.DB {
 		return db.Select("id", "username", "name", "email", "avatar_url")
 	}).First(&comment, comment.ID)
-	
+
+	h.createNotification(post.UserID, userID, "comment", &postID)
+	h.processMentions(comment.Content, userID, postID)
+
 	c.JSON(http.StatusOK, comment)
+}
+
+// ---------------------- FOLLOWERS / FOLLOWING LISTS ----------------------
+
+type userWithFollowStatus struct {
+	model.User
+	IsFollowing bool `json:"is_following"`
+}
+
+// buildFollowStatusList takes a set of user IDs and returns them as full user
+// records, each annotated with whether the requester currently follows them.
+func (h *Handler) buildFollowStatusList(userIDs []uint, requesterID uint) []userWithFollowStatus {
+	var users []model.User
+	if len(userIDs) > 0 {
+		h.DB.Where("id IN ?", userIDs).Find(&users)
+	}
+
+	var requesterFollowingIDs []uint
+	h.DB.Model(&model.Follow{}).Where("follower_id = ?", requesterID).Pluck("following_id", &requesterFollowingIDs)
+	followingSet := make(map[uint]bool, len(requesterFollowingIDs))
+	for _, id := range requesterFollowingIDs {
+		followingSet[id] = true
+	}
+
+	result := make([]userWithFollowStatus, len(users))
+	for i, u := range users {
+		result[i] = userWithFollowStatus{User: u, IsFollowing: followingSet[u.ID] || u.ID == requesterID}
+	}
+	return result
+}
+
+func (h *Handler) GetFollowers(c *gin.Context) {
+	targetIDNum, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+	targetID := uint(targetIDNum)
+	requesterID := c.GetUint("user_id")
+
+	var follows []model.Follow
+	h.DB.Where("following_id = ?", targetID).Find(&follows)
+
+	ids := make([]uint, len(follows))
+	for i, f := range follows {
+		ids[i] = f.FollowerID
+	}
+
+	c.JSON(http.StatusOK, h.buildFollowStatusList(ids, requesterID))
+}
+
+func (h *Handler) GetFollowing(c *gin.Context) {
+	targetIDNum, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+	targetID := uint(targetIDNum)
+	requesterID := c.GetUint("user_id")
+
+	var follows []model.Follow
+	h.DB.Where("follower_id = ?", targetID).Find(&follows)
+
+	ids := make([]uint, len(follows))
+	for i, f := range follows {
+		ids[i] = f.FollowingID
+	}
+
+	c.JSON(http.StatusOK, h.buildFollowStatusList(ids, requesterID))
+}
+
+// ---------------------- NOTIFICATIONS ----------------------
+
+// createNotification saves a notification and pushes it live over the
+// WebSocket hub if the recipient is connected. Never notifies a user about
+// their own action (e.g. liking your own post).
+func (h *Handler) createNotification(recipientID, actorID uint, notifType string, postID *uint) {
+	if recipientID == actorID {
+		return
+	}
+
+	notif := model.Notification{
+		UserID:  recipientID,
+		ActorID: actorID,
+		Type:    notifType,
+		PostID:  postID,
+	}
+
+	if err := h.DB.Create(&notif).Error; err != nil {
+		return
+	}
+
+	h.DB.Preload("Actor", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id", "username", "name", "avatar_url")
+	}).First(&notif, notif.ID)
+
+	payload, err := json.Marshal(gin.H{"event": "notification", "notification": notif})
+	if err == nil {
+		h.Hub.SendToUser(recipientID, payload)
+	}
+}
+
+var mentionRegex = regexp.MustCompile(`@([a-zA-Z0-9_]+)`)
+
+// processMentions scans content for @username patterns and creates a
+// "mention" notification for each valid, distinct user mentioned.
+func (h *Handler) processMentions(content string, actorID uint, postID uint) {
+	matches := mentionRegex.FindAllStringSubmatch(content, -1)
+	seen := make(map[string]bool)
+
+	for _, m := range matches {
+		username := m[1]
+		if seen[username] {
+			continue
+		}
+		seen[username] = true
+
+		var mentionedUser model.User
+		if err := h.DB.Where("username = ?", username).First(&mentionedUser).Error; err != nil {
+			continue // no such user, skip silently
+		}
+
+		h.createNotification(mentionedUser.ID, actorID, "mention", &postID)
+	}
+}
+
+func (h *Handler) GetNotifications(c *gin.Context) {
+	userID := c.GetUint("user_id")
+
+	var notifications []model.Notification
+	h.DB.Preload("Actor", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id", "username", "name", "avatar_url")
+	}).
+		Where("user_id = ?", userID).
+		Order("created_at desc").
+		Limit(50).
+		Find(&notifications)
+
+	var unreadCount int64
+	h.DB.Model(&model.Notification{}).Where("user_id = ? AND read = ?", userID, false).Count(&unreadCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"notifications": notifications,
+		"unread_count":  unreadCount,
+	})
+}
+
+func (h *Handler) MarkNotificationRead(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	id := c.Param("id")
+
+	if err := h.DB.Model(&model.Notification{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Update("read", true).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update notification"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "marked read"})
+}
+
+func (h *Handler) MarkAllNotificationsRead(c *gin.Context) {
+	userID := c.GetUint("user_id")
+
+	h.DB.Model(&model.Notification{}).
+		Where("user_id = ? AND read = ?", userID, false).
+		Update("read", true)
+
+	c.JSON(http.StatusOK, gin.H{"message": "all marked read"})
 }
 
 // ---------------------- INPUT STRUCTS ----------------------
@@ -308,6 +633,7 @@ type UpdateInput struct {
 	Batch     string `json:"batch"`
 	Location  string `json:"location"`
 	AvatarURL string `json:"avatar_url"`
+	BannerURL string `json:"banner_url"`
 }
 
 // ---------------------- USERS ----------------------
@@ -335,6 +661,19 @@ func (h *Handler) GetUser(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
+	c.JSON(http.StatusOK, user)
+}
+
+func (h *Handler) GetUserByUsername(c *gin.Context) {
+	username := c.Param("username")
+
+	var user model.User
+	// Using LOWER() for a bulletproof case-insensitive match (crucial for clickable mentions)
+	if err := h.DB.Where("LOWER(username) = LOWER(?)", username).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
 	c.JSON(http.StatusOK, user)
 }
 
@@ -427,6 +766,7 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 	user.Batch = input.Batch
 	user.Location = input.Location
 	user.AvatarURL = input.AvatarURL
+	user.BannerURL = input.BannerURL
 
 	h.DB.Save(&user)
 
@@ -436,6 +776,189 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 func (h *Handler) DeleteUser(c *gin.Context) {
 	h.DB.Delete(&model.User{}, c.Param("id"))
 	c.Status(http.StatusNoContent)
+}
+
+
+func (h *Handler) SearchUsers(c *gin.Context) {
+    query := c.Query("q")
+    if query == "" {
+        c.JSON(http.StatusOK, []model.User{})
+        return
+    }
+
+    var users []model.User
+    // Case-insensitive search matching username OR full name
+    err := h.DB.Where("LOWER(username) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?)", 
+        "%"+query+"%", "%"+query+"%").
+        Limit(10).
+        Find(&users).Error
+
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to search users"})
+        return
+    }
+
+    c.JSON(http.StatusOK, users)
+}
+
+
+// ---------------------- FOLLOW / UNFOLLOW ----------------------
+
+func (h *Handler) FollowUser(c *gin.Context) {
+	followerID := c.GetUint("user_id")
+
+	targetIDNum, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+	targetID := uint(targetIDNum)
+
+	if targetID == followerID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot follow yourself"})
+		return
+	}
+
+	var target model.User
+	if err := h.DB.First(&target, targetID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	var existing model.Follow
+	err = h.DB.Where("follower_id = ? AND following_id = ?", followerID, targetID).First(&existing).Error
+	if err == nil {
+		// Already following -- no-op, no duplicate notification
+		c.JSON(http.StatusOK, gin.H{"message": "followed", "following": true})
+		return
+	}
+
+	follow := model.Follow{FollowerID: followerID, FollowingID: targetID}
+	if err := h.DB.Create(&follow).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to follow user"})
+		return
+	}
+
+	h.createNotification(targetID, followerID, "follow", nil)
+
+	c.JSON(http.StatusOK, gin.H{"message": "followed", "following": true})
+}
+
+func (h *Handler) UnfollowUser(c *gin.Context) {
+	followerID := c.GetUint("user_id")
+
+	targetIDNum, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+	targetID := uint(targetIDNum)
+
+	if err := h.DB.Where("follower_id = ? AND following_id = ?", followerID, targetID).
+		Delete(&model.Follow{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unfollow user"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "unfollowed", "following": false})
+}
+
+// ---------------------- PROFILE ----------------------
+
+func (h *Handler) GetUserProfile(c *gin.Context) {
+	requesterID := c.GetUint("user_id")
+
+	targetIDNum, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+	targetID := uint(targetIDNum)
+
+	var user model.User
+	if err := h.DB.First(&user, targetID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	var followerCount, followingCount, postCount int64
+	h.DB.Model(&model.Follow{}).Where("following_id = ?", targetID).Count(&followerCount)
+	h.DB.Model(&model.Follow{}).Where("follower_id = ?", targetID).Count(&followingCount)
+	h.DB.Model(&model.Post{}).Where("user_id = ?", targetID).Count(&postCount)
+
+	var isFollowing bool
+	if requesterID != targetID {
+		var count int64
+		h.DB.Model(&model.Follow{}).
+			Where("follower_id = ? AND following_id = ?", requesterID, targetID).
+			Count(&count)
+		isFollowing = count > 0
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user":            user,
+		"follower_count":  followerCount,
+		"following_count": followingCount,
+		"post_count":      postCount,
+		"is_following":    isFollowing,
+		"is_self":         requesterID == targetID,
+	})
+}
+
+func (h *Handler) GetUserPosts(c *gin.Context) {
+	targetIDNum, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	limit := 10
+	page := 1
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	if p := c.Query("page"); p != "" {
+		fmt.Sscanf(p, "%d", &page)
+	}
+	offset := (page - 1) * limit
+
+	var posts []model.Post
+	if err := h.DB.
+		Where("user_id = ?", uint(targetIDNum)).
+		Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id", "username", "name", "email", "avatar_url")
+		}).
+		Preload("Comments.User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id", "username", "name", "email", "avatar_url")
+		}).
+		Preload("Parent"). // 👈 ADD THIS
+		Preload("Parent.User", func(db *gorm.DB) *gorm.DB { // 👈 AND THIS
+			return db.Select("id", "username", "name", "email", "avatar_url")
+		}).
+		Order("created_at desc").
+		Limit(limit).
+		Offset(offset).
+		Find(&posts).Error; err != nil {
+	}
+
+	requesterID := c.GetUint("user_id")
+	if len(posts) > 0 {
+		ids := make([]uint, len(posts))
+		for i, p := range posts {
+			ids[i] = p.ID
+		}
+		var likedIDs []uint
+		h.DB.Model(&model.Like{}).Where("user_id = ? AND post_id IN ?", requesterID, ids).Pluck("post_id", &likedIDs)
+		likedSet := make(map[uint]bool, len(likedIDs))
+		for _, id := range likedIDs {
+			likedSet[id] = true
+		}
+		for i := range posts {
+			posts[i].LikedByMe = likedSet[posts[i].ID]
+		}
+	}
+
+	c.JSON(http.StatusOK, posts)
 }
 
 // ---------------------- LOGIN ----------------------

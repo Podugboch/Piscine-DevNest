@@ -39,7 +39,10 @@ func Run() error {
 		&model.Resource{},
 		&model.Connection{},
 		&model.Post{},  
-		&model.Comment{}, // 👈 Added this line
+		&model.Comment{}, 
+		&model.Follow{}, 
+		&model.Like{}, 
+		&model.Notification{}, // 👈 Added this line
 	); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}

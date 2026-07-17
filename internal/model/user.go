@@ -22,4 +22,5 @@ type User struct {
 	Batch     string `json:"batch"`
 	Location  string `json:"location"`
 	AvatarURL string `json:"avatar_url"`
+	BannerURL string `json:"banner_url"`
 }
